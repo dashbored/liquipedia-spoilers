@@ -1,0 +1,19 @@
+{
+    "manifest_version": 2,
+    "name": "Liquipedia - Spoiler free",
+    "version": "1.0",
+    "description": "Hides results from Liquipedia dota tournaments.",
+
+    "content_scripts": [
+        {
+            "matches": ["*://liquipedia.net/dota2/*"],
+            "js": ["censor.js"]
+        }
+    ],
+
+    "web_accessible_resources": [
+        "svg/eye-off.svg",
+        "svg/eye-off2.svg",
+        "svg/eye-off-light.svg"
+    ]
+}
