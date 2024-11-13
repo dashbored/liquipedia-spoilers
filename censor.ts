@@ -4,67 +4,111 @@ interface ImageAndTextSelector {
     textSelector: string
 };
 
+interface RelatedElements {
+    primary: string,    // the class selector of the primary object
+    parent?: string,    // the common parent class selector
+    related?: string[]   // related class selectors
+}
+
 
 class SpoilerHandler {
     private readonly imageSubstitute: string;
-    private readonly placeHolder = "******";
+    private readonly placeHolderString = "******";
+    private readonly placeHolderScore = 'X';
 
     constructor(imageSubstitute: string) {
         this.imageSubstitute = imageSubstitute;
     }
 
-    public hideSpoilers(selector: ImageAndTextSelector): void {
-        const images = Array.from(document.querySelectorAll(selector.imageSelector)) as HTMLImageElement[];
+    public hideSpoilers(selector: RelatedElements): void {
+        const elements = Array.from(document.querySelectorAll(selector.primary)) as Element[];
+        
+        elements.forEach(e => {
+            const parentElement = e.closest(selector.parent ?? 'null'); // Not so nice passing a 'null' string, but I just want it to fail :D
+            const related = selector.related
+            ?.map(r => parentElement?.querySelector(r) ?? undefined)
+            .filter((r): r is Element => r !== null);
 
-        images.forEach(img => {
-            const parentElement = img.closest(selector.parentSelector);
-            if(!parentElement) return;
-
-            const textElement = parentElement.querySelector(selector.textSelector) as HTMLAnchorElement | HTMLSpanElement;
-            if(!textElement) return;
-
-            this.setupElementHandlers(img, textElement)
+            this.setupElementHandlers(e, related);
         });
     }
 
-    private setupElementHandlers(imgElement: HTMLImageElement, textElement: HTMLAnchorElement | HTMLSpanElement): void {
-        // Store original states
-        imgElement.dataset.originalImageSource = imgElement.src;
-        textElement.dataset.originalContent = textElement.textContent?.trim() || '';
+    private setupElementHandlers(
+        primary: Element, 
+        related: Element[] | undefined
+    ): void {
 
-        // Remove redirects
-        this.removeRedirect(imgElement);
-        this.removeRedirect(textElement);
-
-        // Add click handlers
-        const toggleHandler = () => this.toggleSpoiler(imgElement, textElement);
-        imgElement.addEventListener("click", toggleHandler);
-        textElement.addEventListener("click", toggleHandler);
+        const toggleHandler = () => this.toggleSpoiler(primary, related);
+        this.storeOriginalState(primary);
+        this.removeRedirect(primary);
+        primary.addEventListener("click", toggleHandler);
+        if(related) {
+            this.storeOriginalState(...related);
+            this.removeRedirect(...related);
+            related.forEach(r => {
+                r.addEventListener("click", toggleHandler);
+            });
+        }
 
         // Initial hide
-        this.toggleSpoiler(imgElement, textElement, true);
+        this.toggleSpoiler(primary, related, true);
+    }
+
+    private storeOriginalState(...elements: Element[]) {
+        elements.forEach(e => {
+            if("dataset" in e && (e as HTMLElement).dataset.original !== undefined) {
+                return;
+            }
+            if(e instanceof HTMLImageElement) {
+                e.dataset.original = e.src;
+            } else if (e instanceof HTMLSpanElement || e instanceof HTMLDivElement || e instanceof HTMLAnchorElement) {
+                e.dataset.original = e.textContent?.trim() || '';
+            }
+        });
+    }
+
+    private removeRedirect(...elements: Element[]): void {
+        elements.forEach(element => {
+            if (element instanceof HTMLImageElement) {
+                element.parentElement?.removeAttribute("href");
+            } else if (element instanceof HTMLSpanElement) {
+                element.querySelectorAll("a").forEach(a => a.removeAttribute("href"));
+            } else if (element instanceof HTMLAnchorElement) {
+                element.removeAttribute("href");
+            } else if (element instanceof HTMLDivElement) {
+                element.style.cursor = 'pointer';
+            }
+        });
     }
 
     private toggleSpoiler(
-        imgElement: HTMLImageElement, 
-        textElement: HTMLAnchorElement | HTMLSpanElement, 
+        primary: Element, 
+        related: Element[] | undefined, 
         forceHide: boolean = false
     ): void {
-        const isCurrentlyHidden = imgElement.src === this.imageSubstitute;
-        const shouldShow = !forceHide && isCurrentlyHidden;
-
-        imgElement.src = shouldShow ? imgElement.dataset.originalImageSource || '' : this.imageSubstitute;
-        textElement.textContent = shouldShow ? textElement.dataset.originalContent || '' : this.placeHolder;
-    }
-
-    private removeRedirect(element: HTMLElement): void {
-        if (element instanceof HTMLImageElement) {
-            element.parentElement?.removeAttribute("href");
-        } else if (element instanceof HTMLSpanElement) {
-            element.querySelectorAll("a").forEach(a => a.removeAttribute("href"));
-        } else if (element instanceof HTMLAnchorElement) {
-            element.removeAttribute("href");
+        let isCurrentlyHidden: boolean;
+        if(primary instanceof HTMLImageElement) {
+            isCurrentlyHidden = primary.src === this.imageSubstitute;
+        } else {
+            isCurrentlyHidden = primary.textContent?.trim() === this.placeHolderScore;
         }
+
+        const shouldShow = !forceHide && isCurrentlyHidden;
+        if(primary instanceof HTMLImageElement) {
+            primary.src = shouldShow ? primary.dataset.original || '' : this.imageSubstitute;
+        } else if (primary instanceof HTMLSpanElement || primary instanceof HTMLAnchorElement){
+            primary.textContent = shouldShow ? primary.dataset.original || '' : this.placeHolderString;
+        } else if (primary instanceof HTMLDivElement) {
+            primary.textContent = shouldShow ? primary.dataset.original || '' : this.placeHolderScore;
+        }
+
+        related?.forEach(r => {
+            if(r instanceof HTMLSpanElement || r instanceof HTMLAnchorElement) {
+                r.textContent = shouldShow ? r.dataset.original || '' : this.placeHolderString;
+            } else if(r instanceof HTMLDivElement) {
+                r.textContent = shouldShow ? r.dataset.original || '' : this.placeHolderScore;
+            }
+        })       
     }
 }
 
@@ -73,22 +117,35 @@ const spoilerHandler = new SpoilerHandler(browser.runtime.getURL("svg/eye-off.sv
 
 // Group Stage - standings
 spoilerHandler.hideSpoilers({
-    imageSelector: ".grouptableslot .team-template-darkmode a img",
-    parentSelector: ".grouptableslot",
-    textSelector: ".grouptableslot .team-template-text a"
+    primary: ".grouptableslot .team-template-darkmode a img",
+    parent: ".grouptableslot",
+    related: [".grouptableslot .team-template-text a"]
 });
 
-// // Playoffs
+// Playoffs
 spoilerHandler.hideSpoilers({
-    imageSelector: ".block-team .team-template-darkmode a img",
-    parentSelector: ".block-team",
-    textSelector: ".block-team span.name > a"
+    primary: ".block-team .team-template-darkmode a img",
+    parent: ".block-team",
+    related: [".block-team span.name > a"]
 });
-
 
 // Prize Pool
 spoilerHandler.hideSpoilers({
-    imageSelector: ".block-team .team-template-darkmode > img",
-    parentSelector: ".block-team",
-    textSelector: ".block-team span.name"
+    primary: ".block-team .team-template-darkmode > img",
+    parent: ".block-team",
+    related: [".block-team span.name"]
+});
+
+// Score in tree
+spoilerHandler.hideSpoilers({
+    primary: ".brkts-opponent-entry-last .brkts-opponent-score-inner",
+    parent: ".brkts-match",
+    related: [".brkts-opponent-score-inner"]
+});
+
+// Score in details
+spoilerHandler.hideSpoilers({
+    primary: ".brkts-popup-header-opponent-score-left",
+    parent: ".brkts-popup-header-dev",
+    related: [".brkts-popup-header-opponent-score-right"]
 });
